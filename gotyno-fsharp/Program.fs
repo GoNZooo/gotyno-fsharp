@@ -135,20 +135,20 @@ do parseArrayImplementation
       .>>. parseFieldType
       |>> fun (length, t) -> Array { Length = length; Type = t }
 
-do parseTypeReferenceImplementation :=
-    let parseTypeReferenceAppliedName name =
-       pchar '<' >>. sepBy1 parseFieldType (pstring ", ")
-       .>> pchar '>'
-       |>> fun references -> TypeReference(AppliedName { Name = name; References = references })
+let parseTypeReferenceAppliedName name =
+    pchar '<' >>. sepBy1 parseFieldType (pstring ", ")
+    .>> pchar '>'
+    |>> fun references -> TypeReference(AppliedName { Name = name; References = references })
 
-    parsePascalSymbol .>>. getUserState
-    >>= fun (name, state) ->
-            match getDefinition name state with
-            | Some definition ->
-                (choice [ parseTypeReferenceAppliedName name
-                          preturn (TypeReference(Name definition)) ])
-                
-            | None -> failFatally (sprintf "Definition with name %s not defined previously." name)
+do parseTypeReferenceImplementation
+   := parsePascalSymbol .>>. getUserState
+      >>= fun (name, state) ->
+              match getDefinition name state with
+              | Some definition ->
+                  (choice [ parseTypeReferenceAppliedName name
+                            preturn (TypeReference(Name definition)) ])
+
+              | None -> failFatally (sprintf "Definition with name %s not defined previously." name)
 
 let parseSymbol: Parser<string, ParserState> =
     parsePascalSymbol <|> parseLowercaseSymbol
