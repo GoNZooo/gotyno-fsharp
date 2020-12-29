@@ -119,7 +119,7 @@ let parseSlice, parseSliceImplementation = createParserForwardedToRef ()
 
 let parseArray, parseArrayImplementation = createParserForwardedToRef ()
 
-let rec parseFieldType: Parser<FieldType, ParserState> =
+let parseFieldType: Parser<FieldType, ParserState> =
     choice [ (parseBuiltin |>> Builtin)
              parseLiteralString
              parseLiteralInteger
