@@ -3,6 +3,10 @@
 open System
 open FParsec
 
+type Location = { Line: uint32; Column: uint32 }
+
+type DefinitionName = { Location: Location; Name: string }
+
 type BuiltinType =
     | String
     | U8
@@ -32,14 +36,22 @@ type FieldType =
 
 and TypeReference =
     | Name of Definition
+    | OpenName of string
     | AppliedName of AppliedName
+    | SelfReference of string
 
-and Definition = Structure of Structure
+and Definition =
+    | Structure of Structure
+    | Union of Union
 
 and Structure = PlainStructure of PlainStructure
 
+and Union =
+    | PlainUnion of PlainUnion
+    | GenericUnion of GenericUnion
+
 and PlainStructure =
-    { Name: String
+    { Name: string
       Fields: StructureField list }
 
 and StructureField = { Name: string; Type: FieldType }
@@ -50,12 +62,23 @@ and AppliedName =
 
 and Array = { Type: FieldType; Length: uint64 }
 
-type Location = { Line: uint32; Column: uint32 }
+and Constructor =
+    { Tag: string
+      Payload: TypeReference option }
 
-type DefinitionName = { Location: Location; Name: string }
+and PlainUnion =
+    { Name: string
+      Constructors: Constructor list }
+
+and GenericUnion =
+    { Name: string
+      Constructors: Constructor list
+      OpenNames: string list }
 
 type ParserState =
-    { NamedDefinitions: Map<string, Definition> }
+    { NamedDefinitions: Map<string, Definition>
+      CurrentOpenNames: string list
+      CurrentDefinition: string option }
 
 let isValidSymbolCharacter c =
     Char.IsLetterOrDigit(c)
@@ -108,6 +131,19 @@ let parseLiteralInteger: Parser<FieldType, ParserState> = puint32 |>> LiteralInt
 
 let getDefinition name { NamedDefinitions = namedDefinitions } = Map.tryFind name namedDefinitions
 
+let isOpenName name { CurrentOpenNames = currentOpenNames } = List.contains name currentOpenNames
+
+let setOpenNames names state = { state with CurrentOpenNames = names }
+
+let isCurrentDefinition name =
+    function
+    | { CurrentDefinition = Some currentDefinition } -> name = currentDefinition
+    | { CurrentDefinition = None } -> false
+
+let setCurrentDefinition name state =
+    { state with
+          CurrentDefinition = Some name }
+
 let addDefinition name definition { NamedDefinitions = namedDefinitions } =
     if Map.containsKey name namedDefinitions
     then Result.Error(sprintf "Duplicate definition with name %s found" name)
@@ -125,7 +161,7 @@ let parseFieldType: Parser<FieldType, ParserState> =
              parseLiteralInteger
              parseSlice
              parseArray
-             parseTypeReference ]
+             (parseTypeReference |>> TypeReference) ]
 
 do parseSliceImplementation
    := pstring "[]" >>. parseFieldType |>> Slice
@@ -138,7 +174,7 @@ do parseArrayImplementation
 let parseTypeReferenceAppliedName name =
     pchar '<' >>. sepBy1 parseFieldType (pstring ", ")
     .>> pchar '>'
-    |>> fun references -> TypeReference(AppliedName { Name = name; References = references })
+    |>> fun references -> AppliedName { Name = name; References = references }
 
 do parseTypeReferenceImplementation
    := parsePascalSymbol .>>. getUserState
@@ -146,9 +182,18 @@ do parseTypeReferenceImplementation
               match getDefinition name state with
               | Some definition ->
                   (choice [ parseTypeReferenceAppliedName name
-                            preturn (TypeReference(Name definition)) ])
+                            preturn (Name definition) ])
 
-              | None -> failFatally (sprintf "Definition with name %s not defined previously." name)
+              | None ->
+                  if isCurrentDefinition name state then
+                      preturn (SelfReference name)
+                  else if isOpenName name state then
+                      preturn (OpenName name)
+                  else
+                      failFatally
+                          (sprintf
+                              "Definition with name %s not defined previously and is not open name in definition."
+                               name)
 
 let parseSymbol: Parser<string, ParserState> =
     parsePascalSymbol <|> parseLowercaseSymbol
@@ -160,18 +205,67 @@ let parseStructureField: Parser<StructureField, ParserState> =
 
 let parsePlainStructure: Parser<Definition, ParserState> =
     pstring "struct " >>. parsePascalSymbol
+    >>= fun name ->
+            updateUserState (setCurrentDefinition name)
+            >>% name
     .>> pstring " {"
     .>> pchar '\n'
     .>>. many1 (pstring "    " >>. parseStructureField)
     .>> pchar '}'
     |>> fun (name, fields) -> Structure(PlainStructure { Name = name; Fields = fields })
 
+let parseConstructor =
+    pstring "    " >>. parseSymbol
+    .>>. opt (pstring ": " >>. parseTypeReference)
+    |>> fun (tag, payload) ->
+            { Constructor.Tag = tag
+              Payload = payload }
+
+let parseConstructors =
+    sepEndBy1 parseConstructor newline .>> pchar '}'
+
+let parseGenericUnion name =
+    pchar '<'
+    >>. sepBy1 parsePascalSymbol (pstring ", ")
+    .>> pstring ">{"
+    .>> newline
+    >>= fun openNames ->
+            updateUserState (setOpenNames openNames)
+            >>% openNames
+    .>>. parseConstructors
+    |>> fun (openNames, constructors) ->
+            GenericUnion
+                { Name = name
+                  OpenNames = openNames
+                  Constructors = constructors }
+
+let parsePlainUnion name =
+    pstring "{" >>. newline >>. parseConstructors
+    |>> fun constructors ->
+            PlainUnion
+                { Name = name
+                  Constructors = constructors }
+
+let parseUnion: Parser<Definition, ParserState> =
+    pstring "union " >>. parsePascalSymbol
+    >>= fun name ->
+            updateUserState (setCurrentDefinition name)
+            >>% name
+    .>> pchar ' '
+    >>= fun name ->
+            choice [ parseGenericUnion name |>> Union
+                     parsePlainUnion name |>> Union ]
+
 let parseDefinition: Parser<Definition, ParserState> =
     let getName =
         function
         | Structure (PlainStructure { Name = name }) -> name
+        | Union (PlainUnion { Name = name }) -> name
+        | Union (GenericUnion { Name = name }) -> name
 
-    choice [ parsePlainStructure ] .>>. getUserState
+    choice [ parsePlainStructure
+             parseUnion ]
+    .>>. getUserState
     >>= fun (definition, state) ->
             match addDefinition (getName definition) definition state with
             | Result.Ok newNamedDefinitions ->
@@ -191,6 +285,11 @@ let main _ =
     name: String
 }
 
+union Maybe <T>{
+    Nothing
+    Just: T
+}
+
 struct Person {
     name: String
     age: U8
@@ -208,6 +307,14 @@ struct Person {
 //    recruiter: Recruiter
 //    spouse: Maybe<Person>
 //}
-    printfn "%A" (runParserOnString parseModule { NamedDefinitions = Map.empty } "" plainStructure)
+    printfn
+        "%A"
+        (runParserOnString
+            parseModule
+             { NamedDefinitions = Map.empty
+               CurrentOpenNames = []
+               CurrentDefinition = None }
+             ""
+             plainStructure)
 
     0 // return an integer exit code
