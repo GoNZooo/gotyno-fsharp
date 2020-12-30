@@ -184,16 +184,11 @@ do parseTypeReferenceImplementation
                   (choice [ parseTypeReferenceAppliedName name
                             preturn (Name definition) ])
 
+              | None when isCurrentDefinition name state -> preturn (SelfReference name)
+              | None when isOpenName name state -> preturn (OpenName name)
               | None ->
-                  if isCurrentDefinition name state then
-                      preturn (SelfReference name)
-                  else if isOpenName name state then
-                      preturn (OpenName name)
-                  else
-                      failFatally
-                          (sprintf
-                              "Definition with name %s not defined previously and is not open name in definition."
-                               name)
+                  failFatally
+                      (sprintf "Definition with name %s not defined previously and is not open name in definition." name)
 
 let parseSymbol: Parser<string, ParserState> =
     parsePascalSymbol <|> parseLowercaseSymbol
