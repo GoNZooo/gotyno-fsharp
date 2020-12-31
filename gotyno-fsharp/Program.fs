@@ -44,7 +44,9 @@ and Definition =
     | Structure of Structure
     | Union of Union
 
-and Structure = PlainStructure of PlainStructure
+and Structure =
+    | PlainStructure of PlainStructure
+    | GenericStructure of GenericStructure
 
 and Union =
     | PlainUnion of PlainUnion
@@ -53,6 +55,11 @@ and Union =
 and PlainStructure =
     { Name: string
       Fields: StructureField list }
+
+and GenericStructure =
+    { Name: string
+      Fields: StructureField list
+      OpenNames: string list }
 
 and StructureField = { Name: string; Type: FieldType }
 
@@ -200,14 +207,11 @@ let parseStructureField: Parser<StructureField, ParserState> =
 
 let parsePlainStructure: Parser<Definition, ParserState> =
     pstring "struct " >>. parsePascalSymbol
+    .>> pchar ' '
     >>= fun name ->
-            updateUserState (setCurrentDefinition name)
-            >>% name
-    .>> pstring " {"
-    .>> pchar '\n'
-    .>>. many1 (pstring "    " >>. parseStructureField)
-    .>> pchar '}'
-    |>> fun (name, fields) -> Structure(PlainStructure { Name = name; Fields = fields })
+            updateUserState (setCurrentDefinition (Some name))
+            >>. choice [ parseGenericStructure name |>> Structure
+                         parsePlainStructure name |>> Structure ]
 
 let parseConstructor =
     pstring "    " >>. parseSymbol
@@ -255,6 +259,7 @@ let parseDefinition: Parser<Definition, ParserState> =
     let getName =
         function
         | Structure (PlainStructure { Name = name }) -> name
+        | Structure (GenericStructure { Name = name }) -> name
         | Union (PlainUnion { Name = name }) -> name
         | Union (GenericUnion { Name = name }) -> name
 
@@ -278,6 +283,11 @@ let parseModule: Parser<Definition list, ParserState> =
 let main _ =
     let plainStructure = """struct Recruiter {
     name: String
+}
+
+struct Node <T, U>{
+    data: *T
+    otherData: ?U
 }
 
 union Maybe <T>{
