@@ -71,7 +71,7 @@ and Array = { Type: FieldType; Length: uint64 }
 
 and Constructor =
     { Tag: string
-      Payload: TypeReference option }
+      Payload: FieldType option }
 
 and PlainUnion =
     { Name: string
@@ -181,13 +181,13 @@ do parseArrayImplementation
    := pchar '[' >>. puint64 .>> pchar ']'
       .>>. parseFieldType
       |>> fun (length, t) -> Array { Length = length; Type = t }
-      
+
 do parsePointerImplementation
    := pchar '*' >>. parseFieldType |>> Pointer
-   
+
 do parseOptionalImplementation
    := pchar '?' >>. parseFieldType |>> Optional
-   
+
 let parseTypeReferenceAppliedName name =
     pchar '<' >>. sepBy1 parseFieldType (pstring ", ")
     .>> pchar '>'
@@ -201,7 +201,9 @@ do parseTypeReferenceImplementation
                   (choice [ parseTypeReferenceAppliedName name
                             preturn (Name definition) ])
 
-              | None when isCurrentDefinition name state -> preturn (SelfReference name)
+              | None when isCurrentDefinition name state ->
+                  choice [ parseTypeReferenceAppliedName name
+                           preturn (SelfReference name) ]
               | None when isOpenName name state -> preturn (OpenName name)
               | None ->
                   failFatally
@@ -249,7 +251,7 @@ let parseStructure =
 
 let parseConstructor =
     pstring "    " >>. parseSymbol
-    .>>. opt (pstring ": " >>. parseTypeReference)
+    .>>. opt (pstring ": " >>. parseFieldType)
     |>> fun (tag, payload) ->
             { Constructor.Tag = tag
               Payload = payload }
@@ -309,9 +311,7 @@ let parseDefinition: Parser<Definition, ParserState> =
                 >>% definition
             | Result.Error errorMessage -> failFatally errorMessage
 
-let parseModule: Parser<Definition list, ParserState> =
-    (sepBy1 parseDefinition newline)
-    .>> eof
+let parseModule: Parser<Definition list, ParserState> = (sepBy1 parseDefinition newline) .>> eof
 
 [<EntryPoint>]
 let main _ =
@@ -343,6 +343,17 @@ struct Person {
 union Either <L, R>{
     Left: L
     Right: R
+}
+
+union WithMaybe <T, E>{
+    WithConcrete: Maybe<String>
+    WithGeneric: Maybe<T>
+    WithBare: E
+}
+
+union List <T>{
+    Empty
+    Cons: *List<T>
 }
 """
 
