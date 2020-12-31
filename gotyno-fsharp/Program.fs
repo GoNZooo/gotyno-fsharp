@@ -147,9 +147,7 @@ let isCurrentDefinition name =
     | { CurrentDefinition = Some currentDefinition } -> name = currentDefinition
     | { CurrentDefinition = None } -> false
 
-let setCurrentDefinition name state =
-    { state with
-          CurrentDefinition = Some name }
+let setCurrentDefinition name state = { state with CurrentDefinition = name }
 
 let addDefinition name definition { NamedDefinitions = namedDefinitions } =
     if Map.containsKey name namedDefinitions
@@ -213,11 +211,35 @@ let parseSymbol: Parser<string, ParserState> =
     parsePascalSymbol <|> parseLowercaseSymbol
 
 let parseStructureField: Parser<StructureField, ParserState> =
-    parseSymbol .>> pstring ": " .>>. parseFieldType
-    .>> pchar '\n'
+    pstring "    " >>. parseSymbol .>> pstring ": "
+    .>>. parseFieldType
     |>> fun (name, fieldType) -> { Name = name; Type = fieldType }
 
-let parsePlainStructure: Parser<Definition, ParserState> =
+let parseStructureFields = sepEndBy1 parseStructureField newline
+
+let parsePlainStructure name =
+    pchar '{' >>. newline >>. parseStructureFields
+    .>> pchar '}'
+    |>> fun fields -> PlainStructure { Name = name; Fields = fields }
+
+let parseOpenNames = sepBy1 parsePascalSymbol (pstring ", ")
+
+let parseGenericStructure name =
+    pchar '<' >>. parseOpenNames
+    >>= fun openNames ->
+            updateUserState (setOpenNames openNames)
+            >>% openNames
+    .>> pstring ">{"
+    .>> newline
+    .>>. parseStructureFields
+    .>> pchar '}'
+    |>> fun (openNames, fields) ->
+            GenericStructure
+                { Name = name
+                  OpenNames = openNames
+                  Fields = fields }
+
+let parseStructure =
     pstring "struct " >>. parsePascalSymbol
     .>> pchar ' '
     >>= fun name ->
@@ -236,8 +258,7 @@ let parseConstructors =
     sepEndBy1 parseConstructor newline .>> pchar '}'
 
 let parseGenericUnion name =
-    pchar '<'
-    >>. sepBy1 parsePascalSymbol (pstring ", ")
+    pchar '<' >>. parseOpenNames
     .>> pstring ">{"
     .>> newline
     >>= fun openNames ->
@@ -260,7 +281,7 @@ let parsePlainUnion name =
 let parseUnion: Parser<Definition, ParserState> =
     pstring "union " >>. parsePascalSymbol
     >>= fun name ->
-            updateUserState (setCurrentDefinition name)
+            updateUserState (setCurrentDefinition (Some name))
             >>% name
     .>> pchar ' '
     >>= fun name ->
@@ -275,8 +296,9 @@ let parseDefinition: Parser<Definition, ParserState> =
         | Union (PlainUnion { Name = name }) -> name
         | Union (GenericUnion { Name = name }) -> name
 
-    choice [ parsePlainStructure
-             parseUnion ]
+    updateUserState (setOpenNames [] >> setCurrentDefinition None)
+    >>. choice [ parseStructure; parseUnion ]
+    .>> newline
     .>>. getUserState
     >>= fun (definition, state) ->
             match addDefinition (getName definition) definition state with
@@ -288,7 +310,7 @@ let parseDefinition: Parser<Definition, ParserState> =
             | Result.Error errorMessage -> failFatally errorMessage
 
 let parseModule: Parser<Definition list, ParserState> =
-    sepEndBy1 parseDefinition (skipMany1 (pchar '\n'))
+    (sepBy1 parseDefinition newline)
     .>> eof
 
 [<EntryPoint>]
@@ -316,6 +338,11 @@ struct Person {
     last_fifteen_comments: [15]String
     recruiter: Recruiter
     spouse: Maybe<Person>
+}
+
+union Either <L, R>{
+    Left: L
+    Right: R
 }
 """
 
