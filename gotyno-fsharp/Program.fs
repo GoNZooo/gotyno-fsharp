@@ -162,12 +162,18 @@ let parseSlice, parseSliceImplementation = createParserForwardedToRef ()
 
 let parseArray, parseArrayImplementation = createParserForwardedToRef ()
 
+let parsePointer, parsePointerImplementation = createParserForwardedToRef ()
+
+let parseOptional, parseOptionalImplementation = createParserForwardedToRef ()
+
 let parseFieldType: Parser<FieldType, ParserState> =
     choice [ (parseBuiltin |>> Builtin)
              parseLiteralString
              parseLiteralInteger
              parseSlice
              parseArray
+             parsePointer
+             parseOptional
              (parseTypeReference |>> TypeReference) ]
 
 do parseSliceImplementation
@@ -177,7 +183,13 @@ do parseArrayImplementation
    := pchar '[' >>. puint64 .>> pchar ']'
       .>>. parseFieldType
       |>> fun (length, t) -> Array { Length = length; Type = t }
-
+      
+do parsePointerImplementation
+   := pchar '*' >>. parseFieldType |>> Pointer
+   
+do parseOptionalImplementation
+   := pchar '?' >>. parseFieldType |>> Optional
+   
 let parseTypeReferenceAppliedName name =
     pchar '<' >>. sepBy1 parseFieldType (pstring ", ")
     .>> pchar '>'
