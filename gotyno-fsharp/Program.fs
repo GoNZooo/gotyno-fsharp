@@ -43,6 +43,7 @@ and TypeReference =
 and Definition =
     | Structure of Structure
     | Union of Union
+    | Import of Import
 
 and Structure =
     | PlainStructure of PlainStructure
@@ -81,6 +82,8 @@ and GenericUnion =
     { Name: string
       Constructors: Constructor list
       OpenNames: string list }
+
+and Import = { Name: string; Alias: string option }
 
 type ParserState =
     { NamedDefinitions: Map<string, Definition>
@@ -290,6 +293,16 @@ let parseUnion: Parser<Definition, ParserState> =
             choice [ parseGenericUnion name |>> Union
                      parsePlainUnion name |>> Union ]
 
+let parseAliasedImport name =
+    pstring " = " >>. parseSymbol
+    |>> fun alias -> { Name = name; Alias = Some alias }
+
+let parseImport =
+    pstring "import " >>. parseSymbol
+    >>= fun name ->
+            choice [ parseAliasedImport name
+                     preturn { Name = name; Alias = None } ]
+
 let parseDefinition: Parser<Definition, ParserState> =
     let getName =
         function
@@ -297,9 +310,10 @@ let parseDefinition: Parser<Definition, ParserState> =
         | Structure (GenericStructure { Name = name }) -> name
         | Union (PlainUnion { Name = name }) -> name
         | Union (GenericUnion { Name = name }) -> name
+        | Import { Name = name } -> name
 
     updateUserState (setOpenNames [] >> setCurrentDefinition None)
-    >>. choice [ parseStructure; parseUnion ]
+    >>. choice [ parseStructure; parseUnion; parseImport |>> Import ]
     .>> newline
     .>>. getUserState
     >>= fun (definition, state) ->
@@ -381,6 +395,10 @@ union Event {
     SetEmails: [5]Email
     Close
 }
+
+import other
+
+import importName = aliasedName
 """
 
     //    hobbies: []String
