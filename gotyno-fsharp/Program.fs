@@ -355,6 +355,32 @@ union List <T>{
     Empty
     Cons: *List<T>
 }
+
+struct LogInData {
+    username: String
+    password: String
+}
+
+struct UserId {
+    value: String
+}
+
+struct Channel {
+    name: String
+    private: Boolean
+}
+
+struct Email {
+    value: String
+}
+
+union Event {
+    LogIn: LogInData
+    LogOut: UserId
+    JoinChannels: []Channel
+    SetEmails: [5]Email
+    Close
+}
 """
 
     //    hobbies: []String
