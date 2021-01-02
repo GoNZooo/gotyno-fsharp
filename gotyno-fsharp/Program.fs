@@ -44,6 +44,7 @@ and Definition =
     | Structure of Structure
     | Union of Union
     | Import of Import
+    | Enumeration of Enumeration
 
 and Structure =
     | PlainStructure of PlainStructure
@@ -85,6 +86,18 @@ and GenericUnion =
 
 and Import = { Name: string; Alias: string option }
 
+and Enumeration =
+    { Name: string
+      Entries: EnumerationEntry list }
+
+and EnumerationEntry =
+    { Tag: string
+      Value: EnumerationValue }
+
+and EnumerationValue =
+    | String of string
+    | UnsignedInteger of uint32
+
 type ParserState =
     { NamedDefinitions: Map<string, Definition>
       CurrentOpenNames: string list
@@ -106,7 +119,7 @@ let parseLowercaseSymbol: Parser<string, ParserState> =
     .>>. manyChars parseValidSymbolCharacter
     |>> fun (first, rest) -> string (first) + rest
 
-let parseBuiltinString: Parser<BuiltinType, ParserState> = pstring "String" >>% String
+let parseBuiltinString: Parser<BuiltinType, ParserState> = pstring "String" >>% BuiltinType.String
 
 let parseBuiltinBoolean: Parser<BuiltinType, ParserState> = pstring "Boolean" >>% Boolean
 
@@ -132,9 +145,12 @@ let parseBuiltin: Parser<BuiltinType, ParserState> =
     <|> parseBuiltinBoolean
     <|> parseBuiltinInteger
     <|> parseBuiltinFloat
+    
+let isLiteralStringCharacter c =
+    isLetter c || isDigit c || (isAnyOf "{}[]$?&<>;/()|#^:=@!\\%") c
 
 let parseLiteralString: Parser<FieldType, ParserState> =
-    between (pchar '"') (pchar '"') (manyChars anyChar)
+    between (pchar '"') (pchar '"') (manySatisfy isLiteralStringCharacter)
     |>> LiteralString
 
 let parseLiteralInteger: Parser<FieldType, ParserState> = puint32 |>> LiteralInteger
@@ -303,6 +319,37 @@ let parseImport =
             choice [ parseAliasedImport name
                      preturn { Name = name; Alias = None } ]
 
+let parseEnumerationValueString =
+    parseLiteralString
+    >>= function
+    | LiteralString s -> preturn (EnumerationValue.String s)
+    | _ -> raise (Exception "Shouldn't be possible")
+
+let parseEnumerationValueInteger =
+    parseLiteralInteger
+    >>= function
+    | LiteralInteger i -> preturn (EnumerationValue.UnsignedInteger i)
+    | _ -> raise (Exception "Shouldn't be possible")
+
+let parseEnumerationValue =
+    choice [ parseEnumerationValueString
+             parseEnumerationValueInteger ]
+
+let parseEnumerationEntry =
+    pstring "    " >>. parseSymbol .>> pstring " = "
+    .>>. parseEnumerationValue
+    |>> fun (tag, value) -> { Tag = tag; Value = value }
+
+let parseEnumerationEntries = sepEndBy1 parseEnumerationEntry newline
+
+let parseEnumeration =
+    pstring "enum " >>. parsePascalSymbol
+    .>> pstring " {"
+    .>> newline
+    .>>. parseEnumerationEntries
+    .>> pchar '}'
+    |>> fun (name, entries) -> { Name = name; Entries = entries }
+
 let parseDefinition: Parser<Definition, ParserState> =
     let getName =
         function
@@ -311,9 +358,13 @@ let parseDefinition: Parser<Definition, ParserState> =
         | Union (PlainUnion { Name = name }) -> name
         | Union (GenericUnion { Name = name }) -> name
         | Import { Name = name } -> name
+        | Enumeration { Name = name } -> name
 
     updateUserState (setOpenNames [] >> setCurrentDefinition None)
-    >>. choice [ parseStructure; parseUnion; parseImport |>> Import ]
+    >>. choice [ parseStructure
+                 parseUnion
+                 parseImport |>> Import
+                 parseEnumeration |>> Enumeration ]
     .>> newline
     .>>. getUserState
     >>= fun (definition, state) ->
@@ -399,13 +450,25 @@ union Event {
 import other
 
 import importName = aliasedName
+
+struct S {
+    type: "StructTag"
+    field: U32
+}
+
+enum BackdropSize {
+    w300 = "w300"
+    w1280 = "w1280"
+    original = "original"
+}
+
+enum IntegerEnumeration {
+    Zero = 0
+    One = 1
+    Two = 2
+}
 """
 
-    //    hobbies: []String
-//    last_fifteen_comments: [15]String
-//    recruiter: Recruiter
-//    spouse: Maybe<Person>
-//}
     printfn
         "%A"
         (runParserOnString
